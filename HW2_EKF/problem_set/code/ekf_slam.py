@@ -86,7 +86,8 @@ def warp2pi(angle_rad):
     \param angle_rad Input angle in radius
     \return angle_rad_warped Warped angle to [-\pi, \pi].
     """
-    return angle_rad
+    angle_rad_warped = (angle_rad + np.pi) % (2 * np.pi) - np.pi
+    return angle_rad_warped
 
 
 def init_landmarks(init_measure, init_measure_cov, init_pose, init_pose_cov):
@@ -106,6 +107,21 @@ def init_landmarks(init_measure, init_measure_cov, init_pose, init_pose_cov):
 
     landmark = np.zeros((2 * k, 1))
     landmark_cov = np.zeros((2 * k, 2 * k))
+    x, y, theta = init_pose.flatten()
+
+    for i in range(k):
+        beta, r = init_measure[2 * i, 0], init_measure[2 * i + 1, 0]
+        landmark[2 * i, 0] = x + r * np.cos(theta + beta)
+        landmark[2 * i + 1, 0] = y + r * np.sin(theta + beta)
+        
+        H_pose = np.array([[1, 0, -r * np.sin(theta + beta)],
+                           [0, 1, r * np.cos(theta + beta)]])
+        H_measure = np.array([[-r * np.sin(theta + beta), np.cos(theta + beta)],
+                              [r * np.cos(theta + beta), np.sin(theta + beta)]])
+        
+        landmark_cov[2 * i:2 * i + 2, 2 * i:2 * i + 2] = (
+            H_pose @ init_pose_cov @ H_pose.T + H_measure @ init_measure_cov @ H_measure.T
+        )
 
     return k, landmark, landmark_cov
 
@@ -122,8 +138,29 @@ def predict(X, P, control, control_cov, k):
     \return X_pre Predicted X state of shape (3 + 2k, 1).
     \return P_pre Predicted P covariance of shape (3 + 2k, 3 + 2k).
     '''
+    d, alpha = control[0, 0], control[1, 0]
+    theta = X[2, 0]
+    
+    X_pre = X.copy()
+    X_pre[0, 0] += d * np.cos(theta)
+    X_pre[1, 0] += d * np.sin(theta)
+    X_pre[2, 0] += alpha
+    X_pre[2, 0] = warp2pi(X_pre[2, 0])
+    
+    F = np.eye(3 + 2 * k)
+    F[0, 2] = -d * np.sin(theta)
+    F[1, 2] = d * np.cos(theta)
+    
+    P_pre = F @ P @ F.T
 
-    return X, P
+    R_theta = np.array([[np.cos(theta), -np.sin(theta), 0],
+                         [np.sin(theta), np.cos(theta), 0],
+                         [0, 0, 1]])
+
+    P_pre[:3, :3] += R_theta @ control_cov @ R_theta.T
+    
+    return X_pre, P_pre
+
 
 
 def update(X_pre, P_pre, measure, measure_cov, k):
@@ -139,7 +176,37 @@ def update(X_pre, P_pre, measure, measure_cov, k):
     \return P Updated P covariance of shape (3 + 2k, 3 + 2k).
     '''
 
-    return X_pre, P_pre
+    X = X_pre.copy()
+    P = P_pre.copy()
+    
+    for i in range(k):
+        x, y, theta = X[:3,0]
+        lx, ly = X[3 + 2 * i, 0], X[3 + 2 * i + 1, 0]
+        dx, dy = lx - x, ly - y
+        r_hat = np.sqrt(dx**2 + dy**2)
+        beta_hat = warp2pi(np.arctan2(dy, dx) - theta)
+        
+        H = np.zeros((2, 3 + 2 * k))
+        H[0, 0] = dy / (dx**2 + dy**2)
+        H[0, 1] = -dx / (dx**2 + dy**2)
+        H[0, 2] = -1
+        H[1, 0] = -dx / r_hat
+        H[1, 1] = -dy / r_hat
+        H[0, 3 + 2 * i] = -dy / (dx**2 + dy**2)
+        H[0, 3 + 2 * i + 1] = dx / (dx**2 + dy**2)
+        H[1, 3 + 2 * i] = dx / r_hat
+        H[1, 3 + 2 * i + 1] = dy / r_hat
+        
+        M = np.eye(2)
+        S = H @ P @ H.T + M @ measure_cov @ M.T
+        K = P @ H.T @ np.linalg.inv(S)
+        
+        z = measure[2 * i:2 * i + 2, 0]
+        y = np.array([warp2pi(z[0] - beta_hat), z[1] - r_hat])[:, np.newaxis]
+        X += K @ y
+        P = (np.eye(3 + 2 * k) - K @ H) @ P
+    
+    return X, P
 
 
 def evaluate(X, P, k):
@@ -157,6 +224,15 @@ def evaluate(X, P, k):
     plt.draw()
     plt.waitforbuttonpress(0)
 
+    for i in range(k):
+        estimated = X[3 + 2 * i:3 + 2 * i + 2, 0]
+        true = l_true[2 * i:2 * i + 2]
+        cov = P[3 + 2 * i:3 + 2 * i + 2, 3 + 2 * i:3 + 2 * i + 2]
+        
+        euclidean_dist = np.linalg.norm(estimated - true)
+        mahalanobis_dist = np.sqrt((estimated - true).T @ np.linalg.inv(cov) @ (estimated - true))
+        
+        print(f'Landmark {i}: Euclidean Distance = {euclidean_dist}, Mahalanobis Distance = {mahalanobis_dist}')
 
 def main():
     # TEST: Setup uncertainty parameters
