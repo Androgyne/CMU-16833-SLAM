@@ -52,15 +52,12 @@ def create_linear_system(odoms, observations, sigma_odom, sigma_observation,
         pose_i = i
         pose_j = i + 1
         
-        # Indices in the state vector
         idx_i = pose_i * 2
         idx_j = pose_j * 2
-        
-        # Fill in the Jacobian blocks
+
         A[row_idx:row_idx+2, idx_i:idx_i+2] = -sqrt_inv_odom
         A[row_idx:row_idx+2, idx_j:idx_j+2] = sqrt_inv_odom
         
-        # Compute residual
         b[row_idx:row_idx+2] = sqrt_inv_odom @ odoms[i]
         
         row_idx += 2
@@ -69,17 +66,14 @@ def create_linear_system(odoms, observations, sigma_odom, sigma_observation,
     for obs in observations:
         pose_idx = int(obs[0])
         landmark_idx = int(obs[1])
-        measurement = obs[2:4]  # Extract observed position of the landmark
+        measurement = obs[2:4] 
         
-        # Indices in the state vector
         idx_pose = pose_idx * 2
         idx_landmark = (n_poses + landmark_idx) * 2
         
-        # Fill in the Jacobian blocks
-        A[row_idx:row_idx+2, idx_pose:idx_pose+2] = -sqrt_inv_obs  # w.r.t. robot pose
-        A[row_idx:row_idx+2, idx_landmark:idx_landmark+2] = sqrt_inv_obs  # w.r.t. landmark
+        A[row_idx:row_idx+2, idx_pose:idx_pose+2] = -sqrt_inv_obs  
+        A[row_idx:row_idx+2, idx_landmark:idx_landmark+2] = sqrt_inv_obs 
         
-        # Compute residual
         b[row_idx:row_idx+2] = sqrt_inv_obs @ measurement
         
         row_idx += 2

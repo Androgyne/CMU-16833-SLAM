@@ -30,7 +30,7 @@ def init_states(odoms, observations, n_poses, n_landmarks):
     '''
     traj = np.zeros((n_poses, 2))
     landmarks = np.zeros((n_landmarks, 2))
-    landmarks_mask = np.zeros((n_landmarks), dtype=np.bool)
+    landmarks_mask = np.zeros((n_landmarks), dtype=np.bool_)
 
     for i in range(len(odoms)):
         traj[i + 1, :] = traj[i, :] + odoms[i, :]
@@ -59,7 +59,8 @@ def odometry_estimation(x, i):
     '''
     # TODO: return odometry estimation
     odom = np.zeros((2, ))
-
+    odom[0] = x[(i + 1) * 2] - x[i * 2]
+    odom[1] = x[(i + 1) * 2 + 1] - x[i * 2 + 1]
     return odom
 
 
@@ -73,7 +74,10 @@ def bearing_range_estimation(x, i, j, n_poses):
     '''
     # TODO: return bearing range estimations
     obs = np.zeros((2, ))
-
+    dx = x[n_poses * 2 + j * 2] - x[i * 2]
+    dy = x[n_poses * 2 + j * 2 + 1] - x[i * 2 + 1]
+    obs[0] = np.arctan2(dy, dx)
+    obs[1] = np.sqrt(dx ** 2 + dy ** 2)
     return obs
 
 
@@ -87,7 +91,12 @@ def compute_meas_obs_jacobian(x, i, j, n_poses):
     '''
     # TODO: return jacobian matrix
     jacobian = np.zeros((2, 4))
-
+    dx = x[n_poses * 2 + j * 2] - x[i * 2]
+    dy = x[n_poses * 2 + j * 2 + 1] - x[i * 2 + 1]
+    d2 = dx ** 2 + dy ** 2
+    d = np.sqrt(d2)
+    jacobian = np.array([[dy / d2, -dx / d2, -dy / d2, dx / d2],
+                         [-dx / d, -dy / d, dx / d, dy / d]])
     return jacobian
 
 
@@ -118,11 +127,34 @@ def create_linear_system(x, odoms, observations, sigma_odom, sigma_observation,
     sqrt_inv_odom = np.linalg.inv(scipy.linalg.sqrtm(sigma_odom))
     sqrt_inv_obs = np.linalg.inv(scipy.linalg.sqrtm(sigma_observation))
 
+
+    row_idx = 0
+
     # TODO: First fill in the prior to anchor the 1st pose at (0, 0)
+    A[row_idx:row_idx + 2, 0:2] = sqrt_inv_odom @ np.eye(2)
+    b[row_idx:row_idx + 2] = sqrt_inv_odom @ np.zeros(2)
+    
+    row_idx += 2
 
     # TODO: Then fill in odometry measurements
+    for i in range(n_odom):
+        A[row_idx:row_idx+2, i*2:i*2+4] = sqrt_inv_odom @ np.hstack((-np.eye(2), np.eye(2)))
+        b[row_idx:row_idx+2] = sqrt_inv_odom @ (odoms[i] - odometry_estimation(x, i))
+        row_idx += 2
 
     # TODO: Then fill in landmark measurements
+    for obs in observations:
+        i, j = int(obs[0]), int(obs[1])
+        z_theta, z_d = obs[2:]
+        z = np.array([z_theta, z_d])
+
+        H = compute_meas_obs_jacobian(x, i, j, n_poses)
+        A[row_idx:row_idx+2, i*2:i*2+2] = sqrt_inv_obs @ H[:, :2]
+        A[row_idx:row_idx+2, n_poses*2 + j*2:n_poses*2 + j*2+2] = sqrt_inv_obs @ H[:, 2:]
+        diff = z - bearing_range_estimation(x, i, j, n_poses)
+        diff[0] = warp2pi(diff[0])
+        b[row_idx:row_idx+2] = sqrt_inv_obs @ diff
+        row_idx += 2
 
     return csr_matrix(A), b
 
