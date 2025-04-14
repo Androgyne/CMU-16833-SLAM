@@ -12,6 +12,8 @@ import argparse
 import transforms
 import o3d_utility
 
+from scipy.sparse.linalg import splu
+
 
 def find_projective_correspondence(source_points,
                                    source_normals,
@@ -48,7 +50,11 @@ def find_projective_correspondence(source_points,
     target_vs = np.round(target_vs).astype(int)
 
     # TODO: first filter: valid projection
-    mask = np.zeros_like(target_us).astype(bool)
+    mask = (
+        (target_us >= 0) & (target_us < w) &
+        (target_vs >= 0) & (target_vs < h) &
+        (target_ds > 0)
+    )
     # End of TODO
 
     source_indices = source_indices[mask]
@@ -57,7 +63,9 @@ def find_projective_correspondence(source_points,
     T_source_points = T_source_points[mask]
 
     # TODO: second filter: apply distance threshold
-    mask = np.zeros_like(target_us).astype(bool)
+    target_points = target_vertex_map[target_vs, target_us]
+    diff = np.linalg.norm(T_source_points - target_points, axis=1)
+    mask = (diff < dist_diff)
     # End of TODO
 
     source_indices = source_indices[mask]
@@ -82,6 +90,14 @@ def build_linear_system(source_points, target_points, target_normals, T):
     b = np.zeros((M, ))
 
     # TODO: build the linear system
+    # Cross product between p' and n (vectorized)
+    cross = np.cross(p_prime, n_q)          # (M, 3)
+
+    # A matrix: [cross(p', n), n]
+    A = np.concatenate([cross, n_q], axis=1)  # (M, 6)
+
+    # b vector: dot(n, q - p')
+    b = np.einsum('ij,ij->i', n_q, q - p_prime)  # (M,)
     # End of TODO
 
     return A, b
@@ -129,7 +145,9 @@ def solve(A, b):
     \return delta (6, ) vector by solving the linear system. You may directly use dense solvers from numpy.
     '''
     # TODO: write your relevant solver
-    return np.zeros((6, ))
+    lu = splu(A.T @ A, permc_spec='NATURAL')
+    x = lu.solve(A.T @ b)
+    return x
 
 
 def icp(source_points,

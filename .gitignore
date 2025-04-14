@@ -2,3 +2,5 @@
 tex/
 figure/
 __pycache__/
+data/
+screenshot/
